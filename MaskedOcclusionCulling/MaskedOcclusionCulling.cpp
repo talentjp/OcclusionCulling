@@ -25,6 +25,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
+
 #include <new.h>
 #include <stdlib.h>
 #include <assert.h>
@@ -61,6 +62,227 @@ static FORCE_INLINE void aligned_free(void *ptr)
 
 #endif
 
+//FMA instructions
+__m128 _r_mm_fmadd_ps(__m128 a, __m128 b, __m128 c)
+{
+  __m128 product = _mm_mul_ps(a, b);
+  return _mm_add_ps(product, c);
+}
+
+__m256 _r_mm256_fmadd_ps(__m256 a, __m256 b, __m256 c)
+{
+  __m256 product = _mm256_mul_ps(a, b);
+  return _mm256_add_ps(product, c);
+}
+
+__m256 _r_mm256_fmsub_ps(__m256 a, __m256 b, __m256 c)
+{
+  __m256 product = _mm256_mul_ps(a, b);
+  return _mm256_sub_ps(product, c);
+}
+
+#define SPLIT256(x) __m128i x##_lo = _mm256_extractf128_si256(x, 0); \
+                    __m128i x##_hi = _mm256_extractf128_si256(x, 1);
+#define COMBINE256(low, high, x) __m256i x = _mm256_setzero_si256(); \
+                              x = _mm256_insertf128_si256(x, low, 0); \
+                              x = _mm256_insertf128_si256(x, high, 1);
+#define OPERATE256(a, b, x, op) __m128i x##_lo = op(a##_lo, b##_lo); \
+                                __m128i x##_hi = op(a##_hi, b##_hi); \
+                                COMBINE256(x##_lo, x##_hi, x);
+
+#define SPLIT256PS(x) __m128 x##_lo = _mm256_extractf128_ps(x, 0); \
+                    __m128 x##_hi = _mm256_extractf128_ps(x, 1);
+#define COMBINE256PS(low, high, x) __m256 x = _mm256_setzero_ps(); \
+                              x = _mm256_insertf128_ps(x, low, 0); \
+                              x = _mm256_insertf128_ps(x, high, 1);
+#define OPERATE256PS(a, b, x, op) __m128 x##_lo = op(a##_lo, b##_lo); \
+                                __m128 x##_hi = op(a##_hi, b##_hi); \
+                                COMBINE256PS(x##_lo, x##_hi, x);
+
+//Bitwise operations
+__m256i _r_mm256_and_si256(__m256i a, __m256i b)
+{
+  SPLIT256(a);
+  SPLIT256(b);
+  OPERATE256(a, b, result, _mm_and_si128);
+  return result;
+}
+__m256i _r_mm256_andnot_si256(__m256i a, __m256i b)
+{
+  SPLIT256(a);
+  SPLIT256(b);
+  OPERATE256(a, b, result, _mm_andnot_si128);
+  return result;
+}
+__m256i _r_mm256_or_si256(__m256i a, __m256i b)
+{
+  SPLIT256(a);
+  SPLIT256(b);
+  OPERATE256(a, b, result, _mm_or_si128);
+  return result;
+}
+__m256i _r_mm256_xor_si256(__m256i a, __m256i b)
+{
+  SPLIT256(a);
+  SPLIT256(b);
+  OPERATE256(a, b, result, _mm_xor_si128);
+  return result;
+}
+
+//Min max operations
+__m256i _r_mm256_max_epi32(__m256i a, __m256i b)
+{
+  SPLIT256(a);
+  SPLIT256(b);
+  OPERATE256(a, b, result, _mm_max_epi32);
+  return result;
+}
+
+__m256i _r_mm256_min_epi32(__m256i a, __m256i b)
+{
+  SPLIT256(a);
+  SPLIT256(b);
+  OPERATE256(a, b, result, _mm_min_epi32);
+  return result;
+}
+
+//Integer opeartions
+__m256i _r_mm256_add_epi32(__m256i a, __m256i b)
+{
+  SPLIT256(a);
+  SPLIT256(b);
+  OPERATE256(a, b, result, _mm_add_epi32);
+  return result;
+}
+
+__m256i _r_mm256_sub_epi32(__m256i a, __m256i b)
+{
+  SPLIT256(a);
+  SPLIT256(b);
+  OPERATE256(a, b, result, _mm_sub_epi32);
+  return result;
+}
+
+__m256i _r_mm256_mullo_epi32(__m256i a, __m256i b)
+{
+  SPLIT256(a);
+  SPLIT256(b);
+  OPERATE256(a, b, result, _mm_mullo_epi32);
+  return result;
+}
+
+__m256i _r_mm256_srai_epi32(__m256i a, int offset)
+{
+  SPLIT256(a);
+  a_lo = _mm_srai_epi32(a_lo, offset);
+  a_hi = _mm_srai_epi32(a_hi, offset);
+  COMBINE256(a_lo, a_hi, result);
+  return result;
+}
+
+__m256i _r_mm256_srli_epi32(__m256i a, int offset)
+{
+  SPLIT256(a);
+  a_lo = _mm_srli_epi32(a_lo, offset);
+  a_hi = _mm_srli_epi32(a_hi, offset);
+  COMBINE256(a_lo, a_hi, result);
+  return result;
+}
+
+__m256i _r_mm256_slli_epi32(__m256i a, int offset)
+{
+  SPLIT256(a);
+  a_lo = _mm_slli_epi32(a_lo, offset);
+  a_hi = _mm_slli_epi32(a_hi, offset);
+  COMBINE256(a_lo, a_hi, result);
+  return result;
+}
+
+__m256i _r_mm256_sllv_epi32(__m256i a, __m256i offset)
+{
+  //This is not vectorizable as vector shift is only supported in AVX2, so we may take a huge performance hit
+  unsigned int* a_ptr = reinterpret_cast<unsigned int*>(&a);
+  unsigned int* offset_ptr = reinterpret_cast<unsigned int*>(&offset);
+  for (int i = 0; i < 8; i++)
+  {
+    a_ptr[i] = a_ptr[i] << offset_ptr[i];
+  }  
+  return a;
+}
+
+__m256i _r_mm256_cmpeq_epi32(__m256i a, __m256i b)
+{
+  SPLIT256(a);
+  SPLIT256(b);
+  OPERATE256(a, b, result, _mm_cmpeq_epi32);
+  return result;
+}
+
+__m256i _r_mm256_shuffle_epi8(__m256i a, __m256i b)
+{
+  SPLIT256(a);
+  SPLIT256(b);
+  OPERATE256(a, b, result, _mm_shuffle_epi8);
+  return result;
+}
+
+//Single-precision
+__m256 _r_mm256_add_ps(__m256 a, __m256 b)
+{
+  SPLIT256PS(a);
+  SPLIT256PS(b);
+  OPERATE256PS(a, b, result, _mm_add_ps);
+  return result;
+}
+
+__m256 _r_mm256_sub_ps(__m256 a, __m256 b)
+{
+  SPLIT256PS(a);
+  SPLIT256PS(b);
+  OPERATE256PS(a, b, result, _mm_sub_ps);
+  return result;
+}
+
+__m256 _r_mm256_mul_ps(__m256 a, __m256 b)
+{
+  SPLIT256PS(a);
+  SPLIT256PS(b);
+  OPERATE256PS(a, b, result, _mm_mul_ps);
+  return result;
+}
+
+__m256 _r_mm256_div_ps(__m256 a, __m256 b)
+{
+  SPLIT256PS(a);
+  SPLIT256PS(b);
+  OPERATE256PS(a, b, result, _mm_div_ps);
+  return result;
+}
+
+__m256 _r_mm256_and_ps(__m256 a, __m256 b)
+{
+  SPLIT256PS(a);
+  SPLIT256PS(b);
+  OPERATE256PS(a, b, result, _mm_and_ps);
+  return result;
+}
+
+__m256 _r_mm256_or_ps(__m256 a, __m256 b)
+{
+  SPLIT256PS(a);
+  SPLIT256PS(b);
+  OPERATE256PS(a, b, result, _mm_or_ps);
+  return result;
+}
+
+__m256 _r_mm256_xor_ps(__m256 a, __m256 b)
+{
+  SPLIT256PS(a);
+  SPLIT256PS(b);
+  OPERATE256PS(a, b, result, _mm_xor_ps);
+  return result;
+}
+
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Some SIMD math utility functions
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
@@ -86,7 +308,7 @@ static FORCE_INLINE __m256i operator-(const __m256i &A) { return _mm256_sub_epi3
 static FORCE_INLINE __m128  operator~(const __m128  &A) { return _mm_xor_ps(A, _mm_castsi128_ps(_mm_set1_epi32(~0))); }
 static FORCE_INLINE __m128i operator~(const __m128i &A) { return _mm_xor_si128(A, _mm_set1_epi32(~0)); }
 static FORCE_INLINE __m256  operator~(const __m256  &A) { return _mm256_xor_ps(A, _mm256_castsi256_ps(_mm256_set1_epi32(~0))); }
-static FORCE_INLINE __m256i operator~(const __m256i &A) { return _mm256_xor_si256(A, _mm256_set1_epi32(~0)); }
+static FORCE_INLINE __m256i operator~(const __m256i &A) { return _r_mm256_xor_si256(A, _mm256_set1_epi32(~0)); }
 static FORCE_INLINE __m256 abs(const __m256 &a) { return _mm256_and_ps(a, _mm256_castsi256_ps(_mm256_set1_epi32(0x7FFFFFFF))); }
 static FORCE_INLINE __m128 abs(const __m128 &a) { return _mm_and_ps(a, _mm_castsi128_ps(_mm_set1_epi32(0x7FFFFFFF))); }
 
@@ -100,7 +322,7 @@ static FORCE_INLINE __m128 abs(const __m128 &a) { return _mm_and_ps(a, _mm_casts
 
 #define ALL_SIMD_BINARY_OP(type_suffix, base_type, postfix, func, op) \
 	SIMD_BINARY_OP(__m128##type_suffix, base_type, mm, postfix, func, op) \
-	SIMD_BINARY_OP(__m256##type_suffix, base_type, mm256, postfix, func, op)
+	SIMD_BINARY_OP(__m256##type_suffix, base_type, r_mm256, postfix, func, op)
 
 ALL_SIMD_BINARY_OP(, float, ps, add, +)
 ALL_SIMD_BINARY_OP(, float, ps, sub, -)
@@ -115,9 +337,9 @@ ALL_SIMD_BINARY_OP(, float, ps, xor, ^)
 SIMD_BINARY_OP(__m128i, int, mm, si128, and, &)
 SIMD_BINARY_OP(__m128i, int, mm, si128, or , | )
 SIMD_BINARY_OP(__m128i, int, mm, si128, xor, ^)
-SIMD_BINARY_OP(__m256i, int, mm256, si256, and, &)
-SIMD_BINARY_OP(__m256i, int, mm256, si256, or , | )
-SIMD_BINARY_OP(__m256i, int, mm256, si256, xor, ^)
+SIMD_BINARY_OP(__m256i, int, r_mm256, si256, and, &)  //Adapted AVX2 instructions
+SIMD_BINARY_OP(__m256i, int, r_mm256, si256, or , | )
+SIMD_BINARY_OP(__m256i, int, r_mm256, si256, xor, ^)
 
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 // Constants
@@ -412,12 +634,12 @@ public:
 				if (!dist0Neg)
 				{
 					__m128 t = dist0 / (dist0 - dist1);
-					outVtx[nout++] = _mm_fmadd_ps(p1 - p0, t, p0);
+          outVtx[nout++] = _r_mm_fmadd_ps(p1 - p0, t, p0);
 				}
 				else
 				{
 					__m128 t = dist1 / (dist1 - dist0);
-					outVtx[nout++] = _mm_fmadd_ps(p0 - p1, t, p1);
+					outVtx[nout++] = _r_mm_fmadd_ps(p0 - p1, t, p1);
 				}
 			}
 
@@ -598,10 +820,10 @@ public:
 		bbmaxY = _mm256_cvttps_epi32(_mm256_max_ps(vY[0], _mm256_max_ps(vY[1], vY[2])));
 
 		// Clamp to tile boundaries
-		bbminX = _mm256_max_epi32(bbminX & SIMD_PAD_W_MASK, _mm256_set1_epi32(scissor->mMinX));
-		bbmaxX = _mm256_min_epi32((bbmaxX + TILE_WIDTH) & SIMD_PAD_W_MASK, _mm256_set1_epi32(scissor->mMaxX));
-		bbminY = _mm256_max_epi32(bbminY & SIMD_PAD_H_MASK, _mm256_set1_epi32(scissor->mMinY));
-		bbmaxY = _mm256_min_epi32((bbmaxY + TILE_HEIGHT) & SIMD_PAD_H_MASK, _mm256_set1_epi32(scissor->mMaxY));
+		bbminX = _r_mm256_max_epi32(bbminX & SIMD_PAD_W_MASK, _mm256_set1_epi32(scissor->mMinX));
+		bbmaxX = _r_mm256_min_epi32((bbmaxX + TILE_WIDTH) & SIMD_PAD_W_MASK, _mm256_set1_epi32(scissor->mMaxX));
+		bbminY = _r_mm256_max_epi32(bbminY & SIMD_PAD_H_MASK, _mm256_set1_epi32(scissor->mMinY));
+		bbmaxY = _r_mm256_min_epi32((bbmaxY + TILE_HEIGHT) & SIMD_PAD_H_MASK, _mm256_set1_epi32(scissor->mMaxY));
 	}
 
 	FORCE_INLINE void SortVertices(__m256 *vX, __m256 *vY)
@@ -611,7 +833,7 @@ public:
 		{
 			__m256 ey1 = vY[1] - vY[0];
 			__m256 ey2 = vY[2] - vY[0];
-			__m256 swapMask = (ey1 | ey2 | simd_cast<__m256>(_mm256_cmpeq_epi32(simd_cast<__m256i>(ey2), SIMD_BITS_ZERO)));
+			__m256 swapMask = (ey1 | ey2 | simd_cast<__m256>(_r_mm256_cmpeq_epi32(simd_cast<__m256i>(ey2), SIMD_BITS_ZERO)));
 			__m256 sX, sY;
 			sX = _mm256_blendv_ps(vX[2], vX[0], swapMask);
 			vX[0] = _mm256_blendv_ps(vX[0], vX[1], swapMask);
@@ -633,9 +855,9 @@ public:
 		__m256 y2 = pVtxY[2] - pVtxY[0];
 		__m256 z1 = pVtxZ[1] - pVtxZ[0];
 		__m256 z2 = pVtxZ[2] - pVtxZ[0];
-		__m256 d = _mm256_set1_ps(1.0f) / _mm256_fmsub_ps(x1, y2, y1 * x2);
-		zPixelDx = _mm256_fmsub_ps(z1, y2, y1 * z2) * d;
-		zPixelDy = _mm256_fmsub_ps(x1, z2, z1 * x2) * d;
+		__m256 d = _mm256_set1_ps(1.0f) / _r_mm256_fmsub_ps(x1, y2, y1 * x2);
+    zPixelDx = _r_mm256_fmsub_ps(z1, y2, y1 * z2) * d;
+    zPixelDy = _r_mm256_fmsub_ps(x1, z2, z1 * x2) * d;
 	}
 
 	FORCE_INLINE void UpdateTileQuick(int tileIdx, const __m256i &coverage, const __m256 &zTriv)
@@ -649,23 +871,23 @@ public:
 		__m256 *zMin = mMaskedHiZBuffer[tileIdx].mZMin;
 
 		// Swizzle coverage mask to 8x4 subtiles and test if any subtiles are not covered at all
-		__m256i rastMask = _mm256_shuffle_epi8(coverage, SIMD_SHUFFLE_SCANLINE_TO_SUBTILES);
-		__m256i deadLane = _mm256_cmpeq_epi32(rastMask, SIMD_BITS_ZERO);
+		__m256i rastMask = _r_mm256_shuffle_epi8(coverage, SIMD_SHUFFLE_SCANLINE_TO_SUBTILES);
+		__m256i deadLane = _r_mm256_cmpeq_epi32(rastMask, SIMD_BITS_ZERO);
 
 		// Mask out all subtiles failing the depth test (don't update these subtiles)
-		deadLane |= _mm256_srai_epi32(simd_cast<__m256i>(zTriv - zMin[0]), 31);
-		rastMask = _mm256_andnot_si256(deadLane, rastMask);
+		deadLane |= _r_mm256_srai_epi32(simd_cast<__m256i>(zTriv - zMin[0]), 31);
+		rastMask = _r_mm256_andnot_si256(deadLane, rastMask);
 
 		// Use distance heuristic to discard layer 1 if incoming triangle is significantly nearer to observer
 		// than the buffer contents. See Section 3.2 in "Masked Software Occlusion Culling"
-		__m256i coveredLane = _mm256_cmpeq_epi32(rastMask, SIMD_BITS_ONE);
-		__m256 diff = _mm256_fmsub_ps(zMin[1], _mm256_set1_ps(2.0f), zTriv + zMin[0]); 
-		__m256i discardLayerMask = _mm256_andnot_si256(deadLane, _mm256_srai_epi32(simd_cast<__m256i>(diff), 31) | coveredLane);
+		__m256i coveredLane = _r_mm256_cmpeq_epi32(rastMask, SIMD_BITS_ONE);
+		__m256 diff = _r_mm256_fmsub_ps(zMin[1], _mm256_set1_ps(2.0f), zTriv + zMin[0]); 
+		__m256i discardLayerMask = _r_mm256_andnot_si256(deadLane, _r_mm256_srai_epi32(simd_cast<__m256i>(diff), 31) | coveredLane);
 
 		// Update the mask with incoming triangle coverage
-		mask = _mm256_andnot_si256(discardLayerMask, mask) | rastMask;
+		mask = _r_mm256_andnot_si256(discardLayerMask, mask) | rastMask;
 
-		__m256i maskFull = _mm256_cmpeq_epi32(mask, SIMD_BITS_ONE);
+		__m256i maskFull = _r_mm256_cmpeq_epi32(mask, SIMD_BITS_ONE);
 
 		// Compute new value for zMin[1]. This has one of four outcomes: zMin[1] = min(zMin[1], zTriv),  zMin[1] = zTriv, 
 		// zMin[1] = FLT_MAX or unchanged, depending on if the layer is updated, discarded, fully covered, or not updated
@@ -676,7 +898,7 @@ public:
 
 		// Propagate zMin[1] back to zMin[0] if tile was fully covered, and update the mask
 		zMin[0] = _mm256_blendv_ps(zMin[0], z1min, simd_cast<__m256>(maskFull));
-		mMaskedHiZBuffer[tileIdx].mMask = _mm256_andnot_si256(maskFull, mask);
+		mMaskedHiZBuffer[tileIdx].mMask = _r_mm256_andnot_si256(maskFull, mask);
 	}
 
 	FORCE_INLINE void UpdateTileAccurate(int tileIdx, const __m256i &coverage, const __m256 &zTriv)
@@ -757,10 +979,10 @@ public:
 	{
 		// Floor edge events to integer pixel coordinates (shift out fixed point bits)
 		__m256i r[3];
-		r[0] = _mm256_srai_epi32(events[0], SLOPE_FP_BITS);
-		r[1] = _mm256_srai_epi32(events[1], SLOPE_FP_BITS);
+		r[0] = _r_mm256_srai_epi32(events[0], SLOPE_FP_BITS);
+		r[1] = _r_mm256_srai_epi32(events[1], SLOPE_FP_BITS);
 		if (N_EDGES == 3)
-			r[2] = _mm256_srai_epi32(events[2], SLOPE_FP_BITS);
+			r[2] = _r_mm256_srai_epi32(events[2], SLOPE_FP_BITS);
 
 		__m256 z0 = iz0;
 		for (;;)
@@ -786,18 +1008,18 @@ public:
 			{
 				// Compute coverage mask for entire 32x8 using shift operations
 				__m256i accumulatedMask;
-				__m256i m0 = _mm256_sllv_epi32(SIMD_BITS_ONE, _mm256_max_epi32(r[0], SIMD_BITS_ZERO));
-				__m256i m1 = _mm256_sllv_epi32(SIMD_BITS_ONE, _mm256_max_epi32(r[1], SIMD_BITS_ZERO));
+				__m256i m0 = _r_mm256_sllv_epi32(SIMD_BITS_ONE, _r_mm256_max_epi32(r[0], SIMD_BITS_ZERO));
+				__m256i m1 = _r_mm256_sllv_epi32(SIMD_BITS_ONE, _r_mm256_max_epi32(r[1], SIMD_BITS_ZERO));
 				if (N_EDGES == 3)
 				{
-					__m256i m2 = _mm256_sllv_epi32(SIMD_BITS_ONE, _mm256_max_epi32(r[2], SIMD_BITS_ZERO));
+					__m256i m2 = _r_mm256_sllv_epi32(SIMD_BITS_ONE, _r_mm256_max_epi32(r[2], SIMD_BITS_ZERO));
 					if (MID_VTX_RIGHT)
-						accumulatedMask = _mm256_andnot_si256(m0, _mm256_andnot_si256(m1, m2));
+						accumulatedMask = _r_mm256_andnot_si256(m0, _r_mm256_andnot_si256(m1, m2));
 					else
-						accumulatedMask = _mm256_andnot_si256(m0, m1 & m2);
+						accumulatedMask = _r_mm256_andnot_si256(m0, m1 & m2);
 				}
 				else
-					accumulatedMask = _mm256_andnot_si256(m0, m1);
+					accumulatedMask = _r_mm256_andnot_si256(m0, m1);
 
 				if (TEST_Z)
 				{
@@ -806,8 +1028,8 @@ public:
 					__m256i zPass = simd_cast<__m256i>(_mm256_cmp_ps(zSubTileMax, zMinBuf, _CMP_GE_OQ));
 				
 					__m256i rastMask = _mm256_shuffle_epi8(accumulatedMask, SIMD_SHUFFLE_SCANLINE_TO_SUBTILES);
-					__m256i deadLane = _mm256_cmpeq_epi32(rastMask, SIMD_BITS_ZERO);
-					zPass = _mm256_andnot_si256(deadLane, zPass);
+					__m256i deadLane = _r_mm256_cmpeq_epi32(rastMask, SIMD_BITS_ZERO);
+					zPass = _r_mm256_andnot_si256(deadLane, zPass);
 				
 					if (!_mm256_testz_si256(zPass, zPass))
 						return CullingResult::VISIBLE;
@@ -1076,12 +1298,11 @@ public:
 			for (int i = 0; i < 3; i++)
 			{
 				__m256 rcpW = _mm256_set1_ps(1.0f) / vtxW[i];
-
 				// The rounding modes are set to match HW rasterization with OpenGL. In practice our samples are placed
 				// in the (1,0) corner of each pixel, while HW rasterizer uses (0.5, 0.5). We get (1,0) because of the 
 				// floor used when interpolating along triangle edges. The rounding modes match an offset of (0.5, -0.5)
-				pVtxX[i] = _mm256_round_ps(_mm256_fmadd_ps(vtxX[i] * mHalfWidth , rcpW, mCenterX), _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC);
-				pVtxY[i] = _mm256_round_ps(_mm256_fmadd_ps(vtxY[i] * mHalfHeight, rcpW, mCenterY), _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
+				pVtxX[i] = _mm256_round_ps(_r_mm256_fmadd_ps(vtxX[i] * mHalfWidth , rcpW, mCenterX), _MM_FROUND_TO_POS_INF | _MM_FROUND_NO_EXC);
+				pVtxY[i] = _mm256_round_ps(_r_mm256_fmadd_ps(vtxY[i] * mHalfHeight, rcpW, mCenterY), _MM_FROUND_TO_NEG_INF | _MM_FROUND_NO_EXC);
 				pVtxZ[i] = rcpW;
 			}
 
@@ -1102,10 +1323,10 @@ public:
 			ComputeBoundingBox(bbPixelMinX, bbPixelMinY, bbPixelMaxX, bbPixelMaxY, pVtxX, pVtxY, scissor);
 
 			// Clamp bounding box to tiles (it's already padded in computeBoundingBox)
-			__m256i bbTileMinX = _mm256_srai_epi32(bbPixelMinX, TILE_WIDTH_SHIFT);
-			__m256i bbTileMinY = _mm256_srai_epi32(bbPixelMinY, TILE_HEIGHT_SHIFT);
-			__m256i bbTileMaxX = _mm256_srai_epi32(bbPixelMaxX, TILE_WIDTH_SHIFT);
-			__m256i bbTileMaxY = _mm256_srai_epi32(bbPixelMaxY, TILE_HEIGHT_SHIFT);
+			__m256i bbTileMinX = _r_mm256_srai_epi32(bbPixelMinX, TILE_WIDTH_SHIFT);
+      __m256i bbTileMinY = _r_mm256_srai_epi32(bbPixelMinY, TILE_HEIGHT_SHIFT);
+      __m256i bbTileMaxX = _r_mm256_srai_epi32(bbPixelMaxX, TILE_WIDTH_SHIFT);
+      __m256i bbTileMaxY = _r_mm256_srai_epi32(bbPixelMaxY, TILE_HEIGHT_SHIFT);
 			__m256i bbTileSizeX = bbTileMaxX - bbTileMinX;
 			__m256i bbTileSizeY = bbTileMaxY - bbTileMinY;
 
@@ -1127,7 +1348,7 @@ public:
 			// Compute z value at min corner of bounding box. Offset to make sure z is conservative for all 8x4 subtiles
 			__m256 bbMinXV0 = _mm256_cvtepi32_ps(bbPixelMinX) - pVtxX[0];
 			__m256 bbMinYV0 = _mm256_cvtepi32_ps(bbPixelMinY) - pVtxY[0];
-			__m256 zPlaneOffset = _mm256_fmadd_ps(zPixelDx, bbMinXV0, _mm256_fmadd_ps(zPixelDy, bbMinYV0, pVtxZ[0]));
+			__m256 zPlaneOffset = _r_mm256_fmadd_ps(zPixelDx, bbMinXV0, _r_mm256_fmadd_ps(zPixelDy, bbMinYV0, pVtxZ[0]));
 			__m256 zTileDx = zPixelDx * _mm256_set1_ps((float) TILE_WIDTH);
 			__m256 zTileDy = zPixelDy * _mm256_set1_ps((float) TILE_HEIGHT);
 			if (TEST_Z)
@@ -1154,8 +1375,8 @@ public:
 			int midVtxRight = ~_mm256_movemask_ps(edgeY[1]);
 			__m256 midPixelX = _mm256_blendv_ps(pVtxX[1], pVtxX[2], edgeY[1]);
 			__m256 midPixelY = _mm256_blendv_ps(pVtxY[1], pVtxY[2], edgeY[1]);
-			__m256i midTileY = _mm256_srai_epi32(_mm256_max_epi32(_mm256_cvttps_epi32(midPixelY), SIMD_BITS_ZERO), TILE_HEIGHT_SHIFT);
-			midTileY = _mm256_max_epi32(bbTileMinY, _mm256_min_epi32(bbTileMaxY, midTileY));
+			__m256i midTileY = _r_mm256_srai_epi32(_r_mm256_max_epi32(_mm256_cvttps_epi32(midPixelY), SIMD_BITS_ZERO), TILE_HEIGHT_SHIFT);
+			midTileY = _r_mm256_max_epi32(bbTileMinY, _r_mm256_min_epi32(bbTileMaxY, midTileY));
 
 			//////////////////////////////////////////////////////////////////////////////
 			// Edge slope setup - Note we do not conform to DX/GL rasterization rules
@@ -1184,21 +1405,21 @@ public:
 			// by 1 LSB, which results in overshooting vertices slightly, increasing triangle coverage. 
 			// e0 is always right facing, e1 depends on if the middle vertex is on the left or right
 			slopeFP[0] = slopeFP[0] + 1;
-			slopeFP[1] = slopeFP[1] + _mm256_srli_epi32(~simd_cast<__m256i>(edgeY[1]), 31);
+			slopeFP[1] = slopeFP[1] + _r_mm256_srli_epi32(~simd_cast<__m256i>(edgeY[1]), 31);
 
 			// Compute slope deltas for an 8 scanline step (tile height)
 			__m256i slopeTileDelta[3];
-			slopeTileDelta[0] = _mm256_slli_epi32(slopeFP[0], TILE_HEIGHT_SHIFT);
-			slopeTileDelta[1] = _mm256_slli_epi32(slopeFP[1], TILE_HEIGHT_SHIFT);
-			slopeTileDelta[2] = _mm256_slli_epi32(slopeFP[2], TILE_HEIGHT_SHIFT);
+			slopeTileDelta[0] = _r_mm256_slli_epi32(slopeFP[0], TILE_HEIGHT_SHIFT);
+			slopeTileDelta[1] = _r_mm256_slli_epi32(slopeFP[1], TILE_HEIGHT_SHIFT);
+			slopeTileDelta[2] = _r_mm256_slli_epi32(slopeFP[2], TILE_HEIGHT_SHIFT);
 
 			// Compute edge events for the bottom of the bounding box, or for the middle tile in case of 
 			// the edge originating from the middle vertex.
 			__m256i xDiffi[2], yDiffi[2];
-			xDiffi[0] = _mm256_slli_epi32(_mm256_cvtps_epi32(pVtxX[0]) - bbPixelMinX, SLOPE_FP_BITS);
-			xDiffi[1] = _mm256_slli_epi32(_mm256_cvtps_epi32(midPixelX) - bbPixelMinX, SLOPE_FP_BITS);
+			xDiffi[0] = _r_mm256_slli_epi32(_mm256_cvtps_epi32(pVtxX[0]) - bbPixelMinX, SLOPE_FP_BITS);
+			xDiffi[1] = _r_mm256_slli_epi32(_mm256_cvtps_epi32(midPixelX) - bbPixelMinX, SLOPE_FP_BITS);
 			yDiffi[0] = _mm256_cvtps_epi32(pVtxY[0]) - bbPixelMinY;
-			yDiffi[1] = _mm256_cvtps_epi32(midPixelY) - _mm256_slli_epi32(midTileY, TILE_HEIGHT_SHIFT);
+			yDiffi[1] = _mm256_cvtps_epi32(midPixelY) - _r_mm256_slli_epi32(midTileY, TILE_HEIGHT_SHIFT);
 
 			__m256i eventStart[3];
 			eventStart[0] = xDiffi[0] - slopeFP[0] * yDiffi[0];
@@ -1226,8 +1447,8 @@ public:
 				__m256 zTriMin = _mm256_set1_ps(zMin.m256_f32[triIdx]);
 
 				// Setup Zmin value for first set of 8x4 subtiles
-				__m256 z0 = _mm256_fmadd_ps(_mm256_set1_ps(zPixelDx.m256_f32[triIdx]), SIMD_SUB_TILE_COL_OFFSET_F,
-					_mm256_fmadd_ps(_mm256_set1_ps(zPixelDy.m256_f32[triIdx]), SIMD_SUB_TILE_ROW_OFFSET_F, _mm256_set1_ps(zPlaneOffset.m256_f32[triIdx])));
+				__m256 z0 = _r_mm256_fmadd_ps(_mm256_set1_ps(zPixelDx.m256_f32[triIdx]), SIMD_SUB_TILE_COL_OFFSET_F,
+					_r_mm256_fmadd_ps(_mm256_set1_ps(zPixelDy.m256_f32[triIdx]), SIMD_SUB_TILE_ROW_OFFSET_F, _mm256_set1_ps(zPlaneOffset.m256_f32[triIdx])));
 				float zx = zTileDx.m256_f32[triIdx];
 				float zy = zTileDy.m256_f32[triIdx];
 
