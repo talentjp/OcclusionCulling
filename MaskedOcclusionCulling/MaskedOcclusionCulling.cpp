@@ -205,8 +205,15 @@ __m256i _r_mm256_sllv_epi32(__m256i a, __m256i offset)
   unsigned int* offset_ptr = reinterpret_cast<unsigned int*>(&offset);
   for (int i = 0; i < 8; i++)
   {
-    a_ptr[i] = a_ptr[i] << offset_ptr[i];
-  }  
+    if (offset_ptr[i] < 0 || offset_ptr[i] > 31)
+    {
+      a_ptr[i] = 0;
+    }
+    else
+    {
+      a_ptr[i] = a_ptr[i] << offset_ptr[i];
+    }
+  }
   return a;
 }
 
