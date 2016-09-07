@@ -1,0 +1,11 @@
+*.tlog
+*.suo
+*.log
+*.obj
+*.pdb
+*.lib
+*.dll
+*.sdf
+*.idb
+*.exe
+*.ilk

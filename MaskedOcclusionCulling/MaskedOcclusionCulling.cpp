@@ -37,6 +37,8 @@
 // Compiler specific functions: currently only MSC and Intel compiler should work.
 /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
 
+#pragma warning( disable : 4127 )
+
 #ifdef _MSC_VER
 
 #include <intrin.h>
@@ -230,6 +232,14 @@ __m256i _r_mm256_shuffle_epi8(__m256i a, __m256i b)
   SPLIT256(a);
   SPLIT256(b);
   OPERATE256(a, b, result, _mm_shuffle_epi8);
+  return result;
+}
+
+__m256i _r_mm256_cmpgt_epi32(__m256i a, __m256i b)
+{
+  SPLIT256(a);
+  SPLIT256(b);
+  OPERATE256(a, b, result, _mm_cmpgt_epi32);
   return result;
 }
 
@@ -1554,18 +1564,18 @@ public:
 				__m256 zBuf = mMaskedHiZBuffer[tileIdx].mZMin[0];
 #else
 				__m256i mask = mMaskedHiZBuffer[tileIdx].mMask;
-				__m256 zMin0 = _mm256_blendv_ps(mMaskedHiZBuffer[tileIdx].mZMin[0], mMaskedHiZBuffer[tileIdx].mZMin[1], simd_cast<__m256>(_mm256_cmpeq_epi32(mask, _mm256_set1_epi32(~0))));
-				__m256 zMin1 = _mm256_blendv_ps(mMaskedHiZBuffer[tileIdx].mZMin[1], mMaskedHiZBuffer[tileIdx].mZMin[0], simd_cast<__m256>(_mm256_cmpeq_epi32(mask, _mm256_setzero_si256())));
+				__m256 zMin0 = _mm256_blendv_ps(mMaskedHiZBuffer[tileIdx].mZMin[0], mMaskedHiZBuffer[tileIdx].mZMin[1], simd_cast<__m256>(_r_mm256_cmpeq_epi32(mask, _mm256_set1_epi32(~0))));
+				__m256 zMin1 = _mm256_blendv_ps(mMaskedHiZBuffer[tileIdx].mZMin[1], mMaskedHiZBuffer[tileIdx].mZMin[0], simd_cast<__m256>(_r_mm256_cmpeq_epi32(mask, _mm256_setzero_si256())));
 				__m256 zBuf = _mm256_min_ps(zMin0, zMin1);
 #endif
 				// Perform conservative greater than test against hierarchical Z buffer (zMax >= zBuf means the subtile is visible)
 				__m256i zPass = simd_cast<__m256i>(_mm256_cmp_ps(zMax, zBuf, _CMP_GE_OQ));	//zPass = zMax >= zBuf ? ~0 : 0
 
 				// Mask out lanes corresponding to subtiles outside the bounding box
-				__m256i bboxTestMin = _mm256_and_si256(_mm256_cmpgt_epi32(pixelX, stxmin), _mm256_cmpgt_epi32(pixelY, stymin));
-				__m256i bboxTestMax = _mm256_and_si256(_mm256_cmpgt_epi32(stxmax, pixelX), _mm256_cmpgt_epi32(stymax, pixelY));
-				__m256i boxMask = _mm256_and_si256(bboxTestMin, bboxTestMax);
-				zPass = _mm256_and_si256(zPass, boxMask);
+				__m256i bboxTestMin = _r_mm256_and_si256(_r_mm256_cmpgt_epi32(pixelX, stxmin), _r_mm256_cmpgt_epi32(pixelY, stymin));
+				__m256i bboxTestMax = _r_mm256_and_si256(_r_mm256_cmpgt_epi32(stxmax, pixelX), _r_mm256_cmpgt_epi32(stymax, pixelY));
+				__m256i boxMask = _r_mm256_and_si256(bboxTestMin, bboxTestMax);
+				zPass = _r_mm256_and_si256(zPass, boxMask);
 
 				// If not all tiles failed the conservative z test we can immediately terminate the test
 				if (!_mm256_testz_si256(zPass, zPass))
@@ -1695,3 +1705,5 @@ OcclusionCullingStatistics MaskedOcclusionCulling::GetStatistics()
 {
 	return mPrivate->GetStatistics();
 }
+
+#pragma warning( default: 4127 )
